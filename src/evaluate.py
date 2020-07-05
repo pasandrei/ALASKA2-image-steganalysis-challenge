@@ -1,4 +1,3 @@
-from configs.system_device import device
 from src.metrics import alaska_weighted_auc
 from tqdm import tqdm
 
@@ -40,7 +39,7 @@ def evaluate(model, val_dataloader, args, mean, std, loss_func):
     print(alaska_weighted_auc(complete_ground_truths, complete_predictions))
 
 
-def benchmark_inference_loop(model, val_dataloader, args, mean, std, logger):
+def benchmark_inference_loop(model, val_dataloader, args, mean, std, logger, device):
     benchmark_warmup = 2
     benchmark_iterations = 8
     model.eval()

@@ -1,4 +1,3 @@
-from configs.system_device import device
 from tqdm import tqdm
 
 import torch
@@ -8,7 +7,7 @@ except ImportError:
     pass
 
 
-def train_loop(model, loss_func, optimizer, train_dataloader, logger, args, mean, std, epoch):
+def train_loop(model, loss_func, optimizer, train_dataloader, logger, args, mean, std, device):
     model.train()
     part_loss = total_loss = 0
 
