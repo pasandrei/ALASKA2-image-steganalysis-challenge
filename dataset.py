@@ -50,9 +50,9 @@ class ALASKA2Dataset(Dataset):
 			# self.augmentations = Compose([RandomResizedCrop(height=224, width=224, scale=(0.8, 1.0)),
 			# 							  HorizontalFlip(), VerticalFlip(),
 			# 							  CoarseDropout(max_holes=12, max_height=20, max_width=20)], p=1.0)
-			self.augmentations = Compose([Resize(height=224, width=224), CoarseDropout(max_holes=16, max_height=32, max_width=32)])
+			self.augmentations = Compose([Resize(height=512, width=512), CoarseDropout(max_holes=16, max_height=32, max_width=32)])
 		else:
-			self.augmentations = Compose([Resize(height=224, width=224)])
+			self.augmentations = Compose([Resize(height=512, width=512)])
 
 
 	def get_weights(self):

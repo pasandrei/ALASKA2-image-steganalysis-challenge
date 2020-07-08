@@ -33,6 +33,39 @@ except ImportError:
     pass
 
 
+class WrappedModel(nn.Module):
+    def __init__(self, module):
+        super(WrappedModel, self).__init__()
+        self.module = module  # that I actually define.
+
+    def forward(self, x):
+        return self.module(x)
+
+
+class LabelSmoothing(nn.Module):
+    def __init__(self, smoothing=0.05):
+        super(LabelSmoothing, self).__init__()
+        self.confidence = 1.0 - smoothing
+        self.smoothing = smoothing
+
+    def forward(self, x, target):
+        if self.training:
+            x = x.float()
+            target = target.float()
+            logprobs = torch.nn.functional.log_softmax(x, dim=-1)
+
+            nll_loss = -logprobs * target
+            nll_loss = nll_loss.sum(-1)
+
+            smooth_loss = -logprobs.mean(dim=-1)
+
+            loss = self.confidence * nll_loss + self.smoothing * smooth_loss
+
+            return loss.mean()
+        else:
+            return torch.nn.functional.cross_entropy(x, target)
+
+
 def make_parser():
     parser = ArgumentParser(description="Train Fall Detector")
     parser.add_argument('--data', '-d', type=str, default='dataset', required=False,
@@ -41,7 +74,7 @@ def make_parser():
                         help='number of epochs for training')
     parser.add_argument('--batch-size', '--bs', type=int, default=64,
                         help='number of examples for each iteration')
-    parser.add_argument('--eval-batch-size', '--ebs', type=int, default=32,
+    parser.add_argument('--eval-batch-size', '--ebs', type=int, default=8,
                         help='number of examples for each evaluation iteration')
     parser.add_argument('--seed', '-s', type=int, help='manually set random seed for torch')
     parser.add_argument('--checkpoint', type=str, default=None,
@@ -64,7 +97,8 @@ def make_parser():
     parser.add_argument('--amp', action='store_true')
     parser.add_argument('--num-workers', type=int, default=0)
     parser.add_argument("--local_rank", type=int,
-                        help="Local rank. Necessary for using the torch.distributed.launch utility.")
+                        help="Local rank. Necessary for using the torch.distributed.launch "
+                             "utility.")
 
     return parser
 
@@ -85,12 +119,14 @@ def train(train_loop_func, args, logger):
     if args.seed is None:
         args.seed = np.random.randint(10000)
 
-    if args.distributed:
-        args.seed = (args.seed + torch.distributed.get_rank()) % 2 ** 32
+    # if args.distributed:
+    #     args.seed = (args.seed + torch.distributed.get_rank()) % 2 ** 32
 
     print("Using seed = {}".format(args.seed))
     torch.manual_seed(args.seed)
     np.random.seed(seed=args.seed)
+    random.seed(args.seed)
+    torch.backends.cudnn.deterministic = True
 
     # model = mobilenet_v2(pretrained=True)
     #
@@ -99,12 +135,12 @@ def train(train_loop_func, args, logger):
     #     nn.Linear(model.last_channel, 4),
     # )
 
-    model = EfficientNet.from_pretrained('efficientnet-b0', num_classes=4)
+    model = EfficientNet.from_pretrained('efficientnet-b2', num_classes=4)
 
     torch.distributed.init_process_group(backend="nccl")
     device = torch.device("cuda:{}".format(args.local_rank))
     model = model.to(device)
-    ddp_model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank],
+    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank],
                                                           output_device=args.local_rank)
 
     # Setup data, defaults
@@ -112,8 +148,8 @@ def train(train_loop_func, args, logger):
     train, test = construct_dataset(args.data)
     random.shuffle(train)
 
-    train = train[:len(train) // 5]
-    split_position = int(len(train) * 0.90)
+    train = train[:len(train)]
+    split_position = int(len(train) * 0.95)
 
     train_dataset = ALASKA2Dataset(train[:split_position], root_dir=args.data, augmented=True)
     val_dataset = ALASKA2Dataset(train[split_position:], root_dir=args.data, augmented=False)
@@ -141,7 +177,7 @@ def train(train_loop_func, args, logger):
     # optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate,
     #                             momentum=args.momentum, weight_decay=args.weight_decay)
 
-    optimizer = torch.optim.AdamW(ddp_model.parameters(), lr=args.learning_rate)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
 
     if args.amp:
         model, optimizer = amp.initialize(model, optimizer, opt_level='O2')
@@ -161,8 +197,10 @@ def train(train_loop_func, args, logger):
             print('Provided checkpoint is not path to a file')
             return
 
+    loss_function = nn.CrossEntropyLoss()
+
     if args.mode == 'evaluation':
-        acc = evaluate(model, val_dataloader, args, mean, std)
+        acc = evaluate(model, val_dataloader, args, mean, std, loss_function)
 
         print('Model precision {} mAP'.format(acc))
         return
@@ -194,13 +232,13 @@ def train(train_loop_func, args, logger):
         # for param in model.parameters():
         #     print(param.requires_grad)
 
-        avg_loss = train_loop_func(ddp_model, loss_function, optimizer, train_dataloader, None, args,
+        avg_loss = train_loop_func(model, loss_function, optimizer, train_dataloader, None, args,
                                    mean, std, device)
 
         # logger.update_epoch_time(epoch, end_epoch_time)
         print("saving model...")
         obj = {'epoch': epoch,
-               'model': ddp_model.state_dict(),
+               'model': model.state_dict(),
                'optimizer': optimizer.state_dict(),
                'scheduler': scheduler.state_dict()}
 
@@ -208,7 +246,7 @@ def train(train_loop_func, args, logger):
 
         if epoch % 1 == 0:
             print("Ancepe evaluarea")
-            evaluate(ddp_model, val_dataloader, args, mean, std, loss_function, device)
+            evaluate(model, val_dataloader, args, mean, std, loss_function, device)
             # test_(ddp_model, test_dataloader, args, mean, std, device)
 
         scheduler.step()

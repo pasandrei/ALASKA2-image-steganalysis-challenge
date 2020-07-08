@@ -58,7 +58,7 @@ def load_checkpoint(file_path, model, optimizer=None, scheduler=None):
     """
     Load model, optimizer, scheduler and the last epoch from checkpoint
     """
-    checkpoint = torch.load(file_path)
+    checkpoint = torch.load(file_path, map_location="cuda:0")
 
     model.load_state_dict(checkpoint['model'])
     scheduler.load_state_dict(checkpoint['scheduler'])
