@@ -11,7 +11,7 @@ from torch import nn
 def test_(model, val_dataloader, args, mean, std):
     model.eval()
 
-    file = open("results.csv", 'w')
+    file = open(f"results_{args.local_rank}.csv", 'w')
 
     file.write("Id,Label\n")
 

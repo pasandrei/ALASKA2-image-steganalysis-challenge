@@ -197,7 +197,8 @@ def train(train_loop_func, args, logger):
             print('Provided checkpoint is not path to a file')
             return
 
-    loss_function = nn.CrossEntropyLoss()
+    # loss_function = nn.CrossEntropyLoss()
+    loss_function = LabelSmoothing()
 
     if args.mode == 'evaluation':
         acc = evaluate(model, val_dataloader, args, mean, std, loss_function)
@@ -242,12 +243,13 @@ def train(train_loop_func, args, logger):
                'optimizer': optimizer.state_dict(),
                'scheduler': scheduler.state_dict()}
 
-        torch.save(obj, f'./saved/{args.backbone}_epoch_{epoch}.pt')
+        if args.local_rank == 0:
+            torch.save(obj, f'./saved/{args.backbone}_epoch_{epoch}.pt')
 
         if epoch % 1 == 0:
             print("Ancepe evaluarea")
             evaluate(model, val_dataloader, args, mean, std, loss_function, device)
-            # test_(ddp_model, test_dataloader, args, mean, std, device)
+            test_(model, test_dataloader, args, mean, std, device)
 
         scheduler.step()
 
