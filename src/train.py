@@ -19,11 +19,11 @@ def train_loop(model, loss_func, optimizer, train_dataloader, logger, args, mean
     nr_batches = 0
     for nbatch, data in enumerate(tqdm(train_dataloader)):
         img = data['image']
-        img = torch.Tensor(img).to(device)
+        img = torch.Tensor(img).cuda()
         img.sub_(mean).div_(std)
 
         # ground_truth = data['ground_truth'].to(device).float()
-        ground_truth = data['ground_truth'].to(device)
+        ground_truth = data['ground_truth'].cuda()
 
         # output = model(img).view(-1)
         output = model(img)

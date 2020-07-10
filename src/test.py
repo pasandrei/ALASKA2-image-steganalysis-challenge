@@ -19,7 +19,7 @@ def test_(model, val_dataloader, args, mean, std):
 
     for nbatch, data in enumerate(tqdm(val_dataloader)):
         img = data['image']
-        img = torch.Tensor(img).to(device)
+        img = torch.Tensor(img).cuda()
         img.sub_(mean).div_(std)
 
         images_path = data['image_path']

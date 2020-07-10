@@ -70,9 +70,9 @@ def make_parser():
     parser = ArgumentParser(description="Train Fall Detector")
     parser.add_argument('--data', '-d', type=str, default='dataset', required=False,
                         help='path to test and training data files')
-    parser.add_argument('--epochs', '-e', type=int, default=25,
+    parser.add_argument('--epochs', '-e', type=int, default=27,
                         help='number of epochs for training')
-    parser.add_argument('--batch-size', '--bs', type=int, default=64,
+    parser.add_argument('--batch-size', '--bs', type=int, default=20,
                         help='number of examples for each iteration')
     parser.add_argument('--eval-batch-size', '--ebs', type=int, default=8,
                         help='number of examples for each evaluation iteration')
@@ -92,7 +92,7 @@ def make_parser():
     parser.add_argument('--weight-decay', '--wd', type=float, default=0.0001,
                         help='momentum argument for SGD optimizer')
 
-    parser.add_argument('--backbone', type=str, default='mobilenetv2',
+    parser.add_argument('--backbone', type=str, default='efficientnet-b3',
                         choices=['mobilenetv2', 'efficientnet-b0'])
     parser.add_argument('--amp', action='store_true')
     parser.add_argument('--num-workers', type=int, default=0)
@@ -108,13 +108,13 @@ def train(train_loop_func, args, logger):
     # args.distributed = False
     # if 'WORLD_SIZE' in os.environ:
     #     args.distributed = int(os.environ['WORLD_SIZE']) > 1
-    args.distributed = True
-    if args.distributed:
-        torch.cuda.set_device(args.local_rank)
-        torch.distributed.init_process_group(backend='nccl')
-        args.N_gpu = torch.distributed.get_world_size()
-    else:
-        args.N_gpu = 1
+    #     args.distributed = True
+    #     if args.distributed:
+    #         torch.cuda.set_device(args.local_rank)
+    #         torch.distributed.init_process_group(backend='nccl')
+    #         args.N_gpu = torch.distributed.get_world_size()
+    #     else:
+    #         args.N_gpu = 1
 
     if args.seed is None:
         args.seed = np.random.randint(10000)
@@ -135,13 +135,19 @@ def train(train_loop_func, args, logger):
     #     nn.Linear(model.last_channel, 4),
     # )
 
-    model = EfficientNet.from_pretrained('efficientnet-b2', num_classes=4)
+    model = EfficientNet.from_pretrained('efficientnet-b3', num_classes=4)
 
     torch.distributed.init_process_group(backend="nccl")
-    device = torch.device("cuda:{}".format(args.local_rank))
-    model = model.to(device)
+    torch.cuda.set_device(args.local_rank)
+    model = model.cuda()
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
+
+    if args.amp:
+        model, optimizer = amp.initialize(model, optimizer, opt_level='O2')
+
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank],
-                                                          output_device=args.local_rank)
+                                                      output_device=args.local_rank)
 
     # Setup data, defaults
 
@@ -164,11 +170,11 @@ def train(train_loop_func, args, logger):
     # train_sampler = WeightedRandomSampler(train_dataset.get_weights(), nr_images_in_train)
 
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, drop_last=False,
-                                  num_workers=4, shuffle=False, sampler=train_sampler)
+                                  num_workers=2, shuffle=False, sampler=train_sampler)
     val_dataloader = DataLoader(val_dataset, batch_size=args.eval_batch_size, drop_last=False,
-                                num_workers=4, shuffle=False)
+                                num_workers=2, shuffle=False)
     test_dataloader = DataLoader(test_dataset, batch_size=args.eval_batch_size, drop_last=False,
-                                 num_workers=4, shuffle=False)
+                                 num_workers=2, shuffle=False)
 
     mean, std = generate_mean_std(amp=args.amp)
 
@@ -176,11 +182,6 @@ def train(train_loop_func, args, logger):
 
     # optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate,
     #                             momentum=args.momentum, weight_decay=args.weight_decay)
-
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
-
-    if args.amp:
-        model, optimizer = amp.initialize(model, optimizer, opt_level='O2')
 
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
     # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.2, patience=1,
@@ -214,6 +215,7 @@ def train(train_loop_func, args, logger):
 
     # loss_function = nn.BCEWithLogitsLoss()
     loss_function = nn.CrossEntropyLoss()
+    #     loss_function = LabelSmoothing()
 
     # backbone_freezer = MobileNet_Unfreezer([1, 1, 2, 3, 4, 5, 8, 10, 12])
     # backbone_freezer = EfficientNet_Unfreezer([1, 2, 5, 8, 10, 14, 18],
@@ -234,7 +236,7 @@ def train(train_loop_func, args, logger):
         #     print(param.requires_grad)
 
         avg_loss = train_loop_func(model, loss_function, optimizer, train_dataloader, None, args,
-                                   mean, std, device)
+                                   mean, std)
 
         # logger.update_epoch_time(epoch, end_epoch_time)
         print("saving model...")
@@ -248,8 +250,8 @@ def train(train_loop_func, args, logger):
 
         if epoch % 1 == 0:
             print("Ancepe evaluarea")
-            evaluate(model, val_dataloader, args, mean, std, loss_function, device)
-            test_(model, test_dataloader, args, mean, std, device)
+            evaluate(model, val_dataloader, args, mean, std, loss_function)
+            test_(model, test_dataloader, args, mean, std)
 
         scheduler.step()
 

@@ -16,27 +16,28 @@ def evaluate(model, val_dataloader, args, mean, std, loss_func):
 
     total_loss = 0
 
-    for nbatch, data in enumerate(tqdm(val_dataloader)):
-        img = data['image']
-        img = torch.Tensor(img).to(device)
-        img.sub_(mean).div_(std)
+    with torch.no_grad():
+        for nbatch, data in enumerate(tqdm(val_dataloader)):
+            img = data['image']
+            img = torch.Tensor(img).cuda()
+            img.sub_(mean).div_(std)
 
-        ground_truth = data['ground_truth']
+            ground_truth = data['ground_truth']
 
-        output = model(img)
+            output = model(img)
 
-        loss = loss_func(output, ground_truth.to(device))
-        total_loss += loss.item()
-        # predictions = sigmoid(output)
+            loss = loss_func(output, ground_truth.cuda())
+            total_loss += loss.item()
+            # predictions = sigmoid(output)
 
-        predictions = 1 - nn.functional.softmax(output, dim=1).data.cpu().numpy()[:, 0]
+            predictions = 1 - nn.functional.softmax(output, dim=1).data.cpu().numpy()[:, 0]
 
-        ground_truth[ground_truth != 0] = 1  # When using multiclass
-        complete_ground_truths.extend(ground_truth.tolist())
-        complete_predictions.extend(predictions.tolist())
+            ground_truth[ground_truth != 0] = 1  # When using multiclass
+            complete_ground_truths.extend(ground_truth.tolist())
+            complete_predictions.extend(predictions.tolist())
 
-    print("Average loss this val epoch: {}".format(total_loss / len(val_dataloader)))
-    print(alaska_weighted_auc(complete_ground_truths, complete_predictions))
+        print("Average loss this val epoch: {}".format(total_loss / len(val_dataloader)))
+        print(alaska_weighted_auc(complete_ground_truths, complete_predictions))
 
 
 def benchmark_inference_loop(model, val_dataloader, args, mean, std, logger, device):
