@@ -1,4 +1,3 @@
-from configs.system_device import device
 from tqdm import tqdm
 
 import torch
@@ -8,7 +7,7 @@ except ImportError:
     pass
 
 
-def train_loop(model, loss_func, optimizer, train_dataloader, logger, args, mean, std, epoch):
+def train_loop(model, loss_func, optimizer, train_dataloader, logger, args, mean, std, device):
     model.train()
     part_loss = total_loss = 0
 
@@ -20,11 +19,11 @@ def train_loop(model, loss_func, optimizer, train_dataloader, logger, args, mean
     nr_batches = 0
     for nbatch, data in enumerate(tqdm(train_dataloader)):
         img = data['image']
-        img = torch.Tensor(img).to(device)
+        img = torch.Tensor(img).cuda()
         img.sub_(mean).div_(std)
 
         # ground_truth = data['ground_truth'].to(device).float()
-        ground_truth = data['ground_truth'].to(device)
+        ground_truth = data['ground_truth'].cuda()
 
         # output = model(img).view(-1)
         output = model(img)
@@ -59,7 +58,7 @@ def load_checkpoint(file_path, model, optimizer=None, scheduler=None):
     """
     Load model, optimizer, scheduler and the last epoch from checkpoint
     """
-    checkpoint = torch.load(file_path)
+    checkpoint = torch.load(file_path, map_location="cuda:0")
 
     model.load_state_dict(checkpoint['model'])
     scheduler.load_state_dict(checkpoint['scheduler'])

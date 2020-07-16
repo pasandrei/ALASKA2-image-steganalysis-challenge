@@ -1,25 +1,22 @@
+# This code is heavily influenced by
+# https://github.com/NVIDIA/DeepLearningExamples/blob/master/PyTorch/Detection/SSD/main.py
+
 import os
 import random
 from argparse import ArgumentParser
-
-import matplotlib.pyplot as plt
-from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler, WeightedRandomSampler
-
-from configs.system_device import device
 
 from dataset import ALASKA2Dataset
 
 from src.evaluate import evaluate, benchmark_inference_loop
 from src.test import test_
 
-from models.MobileNetV2 import mobilenet_v2
 from efficientnet_pytorch import EfficientNet
 
 import numpy as np
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, DistributedSampler
 
 from src.logger import Logger, BenchLogger
 from src.unfreezers import MobileNet_Unfreezer, EfficientNet_Unfreezer
@@ -32,18 +29,16 @@ try:
 except ImportError:
     pass
 
-
 def make_parser():
     parser = ArgumentParser(description="Train Fall Detector")
     parser.add_argument('--data', '-d', type=str, default='dataset', required=False,
                         help='path to test and training data files')
-    parser.add_argument('--epochs', '-e', type=int, default=25,
+    parser.add_argument('--epochs', '-e', type=int, default=27,
                         help='number of epochs for training')
-    parser.add_argument('--batch-size', '--bs', type=int, default=64,
+    parser.add_argument('--batch-size', '--bs', type=int, default=20,
                         help='number of examples for each iteration')
-    parser.add_argument('--eval-batch-size', '--ebs', type=int, default=32,
+    parser.add_argument('--eval-batch-size', '--ebs', type=int, default=8,
                         help='number of examples for each evaluation iteration')
-    parser.add_argument('--no-cuda', action='store_true', help='use available GPUs')
     parser.add_argument('--seed', '-s', type=int, help='manually set random seed for torch')
     parser.add_argument('--checkpoint', type=str, default=None,
                         help='path to model checkpoint file')
@@ -60,53 +55,41 @@ def make_parser():
     parser.add_argument('--weight-decay', '--wd', type=float, default=0.0001,
                         help='momentum argument for SGD optimizer')
 
-    parser.add_argument('--backbone', type=str, default='mobilenetv2',
+    parser.add_argument('--backbone', type=str, default='efficientnet-b3',
                         choices=['mobilenetv2', 'efficientnet-b0'])
     parser.add_argument('--amp', action='store_true')
     parser.add_argument('--num-workers', type=int, default=0)
     parser.add_argument("--local_rank", type=int,
-                        help="Local rank. Necessary for using the torch.distributed.launch utility.")
+                        help="Local rank. Necessary for using the torch.distributed.launch "
+                             "utility.")
 
     return parser
 
 
 def train(train_loop_func, args, logger):
-    args.N_gpu = 1
+    # Setup multi-GPU if necessary
+    # args.distributed = False
+    # if 'WORLD_SIZE' in os.environ:
+    #     args.distributed = int(os.environ['WORLD_SIZE']) > 1
+    #     args.distributed = True
+    #     if args.distributed:
+    #         torch.cuda.set_device(args.local_rank)
+    #         torch.distributed.init_process_group(backend='nccl')
+    #         args.N_gpu = torch.distributed.get_world_size()
+    #     else:
+    #         args.N_gpu = 1
 
     if args.seed is None:
         args.seed = np.random.randint(10000)
 
+    # if args.distributed:
+    #     args.seed = (args.seed + torch.distributed.get_rank()) % 2 ** 32
+
     print("Using seed = {}".format(args.seed))
     torch.manual_seed(args.seed)
     np.random.seed(seed=args.seed)
-
-    # Setup data, defaults
-
-    train, test = construct_dataset(args.data)
-    random.shuffle(train)
-
-    train = train[:len(train) // 5]
-    split_position = int(len(train) * 0.90)
-
-    train_dataset = ALASKA2Dataset(train[:split_position], root_dir=args.data, augmented=True)
-    val_dataset = ALASKA2Dataset(train[split_position:], root_dir=args.data, augmented=False)
-    test_dataset = ALASKA2Dataset(test, root_dir=args.data, augmented=False)
-
-    print(len(train_dataset))
-    print(len(val_dataset))
-
-    nr_images_in_train = len(train_dataset)
-    # nr_images_in_train = 256 * 20
-
-    train_sampler = SubsetRandomSampler([i for i in range(nr_images_in_train)])
-    # train_sampler = WeightedRandomSampler(train_dataset.get_weights(), nr_images_in_train)
-
-    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, drop_last=False,
-                                  num_workers=4, shuffle=False, sampler=train_sampler)
-    val_dataloader = DataLoader(val_dataset, batch_size=args.eval_batch_size, drop_last=False,
-                                num_workers=4, shuffle=False)
-    test_dataloader = DataLoader(test_dataset, batch_size=args.eval_batch_size, drop_last=False,
-                                 num_workers=4, shuffle=False)
+    random.seed(args.seed)
+    torch.backends.cudnn.deterministic = True
 
     # model = mobilenet_v2(pretrained=True)
     #
@@ -115,26 +98,53 @@ def train(train_loop_func, args, logger):
     #     nn.Linear(model.last_channel, 4),
     # )
 
-    model = EfficientNet.from_pretrained('efficientnet-b0', num_classes=4)
+    model = EfficientNet.from_pretrained('efficientnet-b3', num_classes=4)
 
-    # cnt = 0
-    # for param in model.parameters():
-    #     param.requires_grad = False
-    #
-    # return
-
-    mean, std = generate_mean_std(amp=args.amp)
-
-    model = model.to(device)
-    # args.learning_rate = args.learning_rate * args.N_gpu * (args.batch_size / 32)
-
-    # optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate,
-    #                             momentum=args.momentum, weight_decay=args.weight_decay)
+    torch.distributed.init_process_group(backend="nccl")
+    torch.cuda.set_device(args.local_rank)
+    model = model.cuda()
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
 
     if args.amp:
         model, optimizer = amp.initialize(model, optimizer, opt_level='O2')
+
+    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank],
+                                                      output_device=args.local_rank)
+
+    # Setup data, defaults
+
+    train, test = construct_dataset(args.data)
+    random.shuffle(train)
+
+    train = train[:len(train)]
+    split_position = int(len(train) * 0.95)
+
+    train_dataset = ALASKA2Dataset(train[:split_position], root_dir=args.data, augmented=True)
+    val_dataset = ALASKA2Dataset(train[split_position:], root_dir=args.data, augmented=False)
+    test_dataset = ALASKA2Dataset(test, root_dir=args.data, augmented=False)
+
+    nr_images_in_train = len(train_dataset)
+    # nr_images_in_train = 256 * 20
+
+    # train_sampler = SubsetRandomSampler([i for i in range(nr_images_in_train)])
+    train_sampler = DistributedSampler(dataset=train_dataset, shuffle=True)
+    train_sampler.set_epoch(0)
+    # train_sampler = WeightedRandomSampler(train_dataset.get_weights(), nr_images_in_train)
+
+    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, drop_last=False,
+                                  num_workers=2, shuffle=False, sampler=train_sampler)
+    val_dataloader = DataLoader(val_dataset, batch_size=args.eval_batch_size, drop_last=False,
+                                num_workers=2, shuffle=False)
+    test_dataloader = DataLoader(test_dataset, batch_size=args.eval_batch_size, drop_last=False,
+                                 num_workers=2, shuffle=False)
+
+    mean, std = generate_mean_std(amp=args.amp)
+
+    # args.learning_rate = args.learning_rate * args.N_gpu * (args.batch_size / 32)
+
+    # optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate,
+    #                             momentum=args.momentum, weight_decay=args.weight_decay)
 
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
     # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.2, patience=1,
@@ -151,8 +161,10 @@ def train(train_loop_func, args, logger):
             print('Provided checkpoint is not path to a file')
             return
 
+    loss_function = nn.CrossEntropyLoss()
+
     if args.mode == 'evaluation':
-        acc = evaluate(model, val_dataloader, args, mean, std)
+        acc = evaluate(model, val_dataloader, args, mean, std, loss_function)
 
         print('Model precision {} mAP'.format(acc))
         return
@@ -163,21 +175,12 @@ def train(train_loop_func, args, logger):
         benchmark_inference_loop(model, val_dataloader, args, mean, std, logger)
         return
 
-    loss_function = nn.BCEWithLogitsLoss()
-    loss_function = nn.CrossEntropyLoss()
-
-    # for param in model.parameters():
-    #     param.requires_grad = False
-    #
-    # for parameters in model.classifier.parameters():
-    #     parameters.requires_grad = True
-
-    # backbone_freezer = MobileNet_Unfreezer([1, 1, 2, 3, 4, 5, 8, 10, 12])
     # backbone_freezer = EfficientNet_Unfreezer([1, 2, 5, 8, 10, 14, 18],
     #                                           [0.97, 0.75, 0.6, 0.4, 0.2, 0.1, 0.0])
 
     for epoch in range(start_epoch, args.epochs + 1):
         print("-----------------------")
+        print("Local Rank: {}, Epoch: {}, Training ...".format(args.local_rank, epoch))
         print("Epoch {} of {}".format(epoch, args.epochs))
 
         # backbone_freezer.step(epoch, model)
@@ -190,7 +193,7 @@ def train(train_loop_func, args, logger):
         #     print(param.requires_grad)
 
         avg_loss = train_loop_func(model, loss_function, optimizer, train_dataloader, None, args,
-                                   mean, std, epoch)
+                                   mean, std)
 
         # logger.update_epoch_time(epoch, end_epoch_time)
         print("saving model...")
@@ -199,12 +202,13 @@ def train(train_loop_func, args, logger):
                'optimizer': optimizer.state_dict(),
                'scheduler': scheduler.state_dict()}
 
-        torch.save(obj, f'./saved/{args.backbone}_epoch_{epoch}.pt')
+        if args.local_rank == 0:
+            torch.save(obj, f'./saved/{args.backbone}_epoch_{epoch}.pt')
 
         if epoch % 1 == 0:
             print("Ancepe evaluarea")
             evaluate(model, val_dataloader, args, mean, std, loss_function)
-            # test_(model, test_dataloader, args, mean, std)
+            test_(model, test_dataloader, args, mean, std)
 
         scheduler.step()
 

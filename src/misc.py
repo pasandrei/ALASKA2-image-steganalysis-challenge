@@ -20,7 +20,7 @@ def construct_dataset(root_dir):
 
 		if folder == "Test":
 			for image in os.listdir(folder_path):
-				test.append([folder + '\\' + image, 0, 1.0])
+				test.append([folder + '/' + image, 0, 1.0])
 		else:
 			if folder == "Cover":
 				label = 0
@@ -36,7 +36,7 @@ def construct_dataset(root_dir):
 				weight = 1.0
 
 			for image in os.listdir(folder_path):
-				train.append([folder + '\\' + image, label, weight])
+				train.append([folder + '/' + image, label, weight])
 
 	return train, test
 
@@ -55,8 +55,8 @@ def generate_mean_std(amp, _3d=False, mean=None, std=None):
 	mean = torch.tensor(mean_val)
 	std = torch.tensor(std_val)
 
-	mean = mean.to(device)
-	std = std.to(device)
+	mean = mean.cuda()
+	std = std.cuda()
 
 	view = [1, len(mean_val), 1, 1]
 	if _3d:
