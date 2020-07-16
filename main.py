@@ -5,14 +5,11 @@ import os
 import random
 from argparse import ArgumentParser
 
-from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler, WeightedRandomSampler
-
 from dataset import ALASKA2Dataset
 
 from src.evaluate import evaluate, benchmark_inference_loop
 from src.test import test_
 
-from models.MobileNetV2 import mobilenet_v2
 from efficientnet_pytorch import EfficientNet
 
 import numpy as np
@@ -31,40 +28,6 @@ try:
     from apex import amp
 except ImportError:
     pass
-
-
-class WrappedModel(nn.Module):
-    def __init__(self, module):
-        super(WrappedModel, self).__init__()
-        self.module = module  # that I actually define.
-
-    def forward(self, x):
-        return self.module(x)
-
-
-class LabelSmoothing(nn.Module):
-    def __init__(self, smoothing=0.05):
-        super(LabelSmoothing, self).__init__()
-        self.confidence = 1.0 - smoothing
-        self.smoothing = smoothing
-
-    def forward(self, x, target):
-        if self.training:
-            x = x.float()
-            target = target.float()
-            logprobs = torch.nn.functional.log_softmax(x, dim=-1)
-
-            nll_loss = -logprobs * target
-            nll_loss = nll_loss.sum(-1)
-
-            smooth_loss = -logprobs.mean(dim=-1)
-
-            loss = self.confidence * nll_loss + self.smoothing * smooth_loss
-
-            return loss.mean()
-        else:
-            return torch.nn.functional.cross_entropy(x, target)
-
 
 def make_parser():
     parser = ArgumentParser(description="Train Fall Detector")
@@ -198,8 +161,7 @@ def train(train_loop_func, args, logger):
             print('Provided checkpoint is not path to a file')
             return
 
-    # loss_function = nn.CrossEntropyLoss()
-    loss_function = LabelSmoothing()
+    loss_function = nn.CrossEntropyLoss()
 
     if args.mode == 'evaluation':
         acc = evaluate(model, val_dataloader, args, mean, std, loss_function)
@@ -213,11 +175,6 @@ def train(train_loop_func, args, logger):
         benchmark_inference_loop(model, val_dataloader, args, mean, std, logger)
         return
 
-    # loss_function = nn.BCEWithLogitsLoss()
-    loss_function = nn.CrossEntropyLoss()
-    #     loss_function = LabelSmoothing()
-
-    # backbone_freezer = MobileNet_Unfreezer([1, 1, 2, 3, 4, 5, 8, 10, 12])
     # backbone_freezer = EfficientNet_Unfreezer([1, 2, 5, 8, 10, 14, 18],
     #                                           [0.97, 0.75, 0.6, 0.4, 0.2, 0.1, 0.0])
 
