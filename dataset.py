@@ -2,57 +2,41 @@ from pathlib import Path
 
 from albumentations import (
     Resize,
-    RandomResizedCrop,
     HorizontalFlip,
     VerticalFlip,
     Rotate,
     CoarseDropout,
-    GaussNoise,
-    RandomBrightnessContrast,
-    RandomGamma,
     ToGray,
     Compose,
-    Blur,
-    OpticalDistortion,
-    RGBShift
+    RandomRotate90
 )
 
 import cv2
 
 import numpy as np
 
-import random
-
 import torch
 from torch.utils.data import Dataset
-import os
 
 
 class ALASKA2Dataset(Dataset):
     def __init__(self, annotations, root_dir, augmented):
         """
         Args:
-            csv_file (string): Path to the csv file with annotations.
+            annotations [[string, int]]
             root_dir (string): Directory with all the images.
-            transform (callable, optional): Optional transform to be applied
-                on a sample.
+            augmented (bool): True if we want to augment the dataset with flips, rotate, etc
         """
 
         self.annotations = annotations
         self.root_dir = root_dir
         self.augmented = augmented
-        self.weights = []
-
-        for i in range(len(annotations)):
-            self.weights.append(float(annotations[i][2]))
 
         if (augmented):
-            self.augmentations = Compose([CoarseDropout(max_holes=16, max_height=32, max_width=32)])
+            self.augmentations = Compose([HorizontalFlip(), VerticalFlip(), RandomRotate90(),
+                                          CoarseDropout(max_holes=16, max_height=32, max_width=32)])
         else:
             self.augmentations = Compose([Resize(height=512, width=512)])
-
-    def get_weights(self):
-        return self.weights
 
     def __len__(self):
         return len(self.annotations)
@@ -71,11 +55,7 @@ class ALASKA2Dataset(Dataset):
         augmented_image = self.augmentations(image=image)
         image = augmented_image['image']
 
-        image = np.float32(image.transpose(2, 0, 1)) / 255
-        # image = np.float32(image) / 255
-
-        # cv2.imshow("", cv2.cvtColor(augmented_image['image'], cv2.COLOR_RGB2BGR))
-        # cv2.waitKey()
+        image = np.float32(image.transpose(2, 0, 1)) / 255 # HxWxC to CxHxW
 
         sample = {'image': image, 'image_path': str(img_name),
                   'ground_truth': self.annotations[idx][1]}

@@ -35,9 +35,9 @@ def make_parser():
                         help='path to test and training data files')
     parser.add_argument('--epochs', '-e', type=int, default=27,
                         help='number of epochs for training')
-    parser.add_argument('--batch-size', '--bs', type=int, default=20,
+    parser.add_argument('--batch-size', '--bs', type=int, default=16,
                         help='number of examples for each iteration')
-    parser.add_argument('--eval-batch-size', '--ebs', type=int, default=8,
+    parser.add_argument('--eval-batch-size', '--ebs', type=int, default=32,
                         help='number of examples for each evaluation iteration')
     parser.add_argument('--seed', '-s', type=int, help='manually set random seed for torch')
     parser.add_argument('--checkpoint', type=str, default=None,
@@ -91,13 +91,6 @@ def train(train_loop_func, args, logger):
     random.seed(args.seed)
     torch.backends.cudnn.deterministic = True
 
-    # model = mobilenet_v2(pretrained=True)
-    #
-    # model.classifier = nn.Sequential(
-    #     nn.Dropout(0.2),
-    #     nn.Linear(model.last_channel, 4),
-    # )
-
     model = EfficientNet.from_pretrained('efficientnet-b3', num_classes=4)
 
     torch.distributed.init_process_group(backend="nccl")
@@ -124,27 +117,19 @@ def train(train_loop_func, args, logger):
     val_dataset = ALASKA2Dataset(train[split_position:], root_dir=args.data, augmented=False)
     test_dataset = ALASKA2Dataset(test, root_dir=args.data, augmented=False)
 
-    nr_images_in_train = len(train_dataset)
-    # nr_images_in_train = 256 * 20
-
-    # train_sampler = SubsetRandomSampler([i for i in range(nr_images_in_train)])
     train_sampler = DistributedSampler(dataset=train_dataset, shuffle=True)
     train_sampler.set_epoch(0)
-    # train_sampler = WeightedRandomSampler(train_dataset.get_weights(), nr_images_in_train)
 
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, drop_last=False,
-                                  num_workers=2, shuffle=False, sampler=train_sampler)
+                                  num_workers=4, shuffle=False, sampler=train_sampler)
     val_dataloader = DataLoader(val_dataset, batch_size=args.eval_batch_size, drop_last=False,
-                                num_workers=2, shuffle=False)
+                                num_workers=4, shuffle=False)
     test_dataloader = DataLoader(test_dataset, batch_size=args.eval_batch_size, drop_last=False,
-                                 num_workers=2, shuffle=False)
+                                 num_workers=4, shuffle=False)
 
     mean, std = generate_mean_std(amp=args.amp)
 
     # args.learning_rate = args.learning_rate * args.N_gpu * (args.batch_size / 32)
-
-    # optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate,
-    #                             momentum=args.momentum, weight_decay=args.weight_decay)
 
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
     # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.2, patience=1,
@@ -175,22 +160,14 @@ def train(train_loop_func, args, logger):
         benchmark_inference_loop(model, val_dataloader, args, mean, std, logger)
         return
 
-    # backbone_freezer = EfficientNet_Unfreezer([1, 2, 5, 8, 10, 14, 18],
-    #                                           [0.97, 0.75, 0.6, 0.4, 0.2, 0.1, 0.0])
-
     for epoch in range(start_epoch, args.epochs + 1):
         print("-----------------------")
         print("Local Rank: {}, Epoch: {}, Training ...".format(args.local_rank, epoch))
         print("Epoch {} of {}".format(epoch, args.epochs))
 
-        # backbone_freezer.step(epoch, model)
-
         print("Total number of parameters trained this epoch: ",
               sum(p.numel() for pg in optimizer.param_groups for p in pg['params'] if
                   p.requires_grad))
-
-        # for param in model.parameters():
-        #     print(param.requires_grad)
 
         avg_loss = train_loop_func(model, loss_function, optimizer, train_dataloader, None, args,
                                    mean, std)
@@ -208,7 +185,7 @@ def train(train_loop_func, args, logger):
         if epoch % 1 == 0:
             print("Ancepe evaluarea")
             evaluate(model, val_dataloader, args, mean, std, loss_function)
-            test_(model, test_dataloader, args, mean, std)
+            test_(model, test_dataloader, args, mean, std, epoch)
 
         scheduler.step()
 

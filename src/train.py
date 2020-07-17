@@ -7,25 +7,20 @@ except ImportError:
     pass
 
 
-def train_loop(model, loss_func, optimizer, train_dataloader, logger, args, mean, std, device):
+def train_loop(model, loss_func, optimizer, train_dataloader, logger, args, mean, std):
     model.train()
     part_loss = total_loss = 0
 
     for param_group in optimizer.param_groups:
-        print("Current learning rate:", param_group['lr'])
+        print("Current learning rate: ", param_group['lr'])
 
-    print(len(train_dataloader))
-
-    nr_batches = 0
     for nbatch, data in enumerate(tqdm(train_dataloader)):
         img = data['image']
         img = torch.Tensor(img).cuda()
         img.sub_(mean).div_(std)
 
-        # ground_truth = data['ground_truth'].to(device).float()
         ground_truth = data['ground_truth'].cuda()
 
-        # output = model(img).view(-1)
         output = model(img)
 
         loss = loss_func(output, ground_truth)
@@ -45,7 +40,6 @@ def train_loop(model, loss_func, optimizer, train_dataloader, logger, args, mean
 
         optimizer.step()
 
-        nr_batches = nbatch
         # if epoch == 1 and nbatch > len(train_dataloader)/10:
         #     break
 
