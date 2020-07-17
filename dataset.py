@@ -36,7 +36,7 @@ class ALASKA2Dataset(Dataset):
             self.augmentations = Compose([HorizontalFlip(), VerticalFlip(), RandomRotate90(),
                                           CoarseDropout(max_holes=16, max_height=32, max_width=32)])
         else:
-            self.augmentations = Compose([Resize(height=512, width=512)])
+            self.augmentations = Compose([])
 
     def __len__(self):
         return len(self.annotations)
