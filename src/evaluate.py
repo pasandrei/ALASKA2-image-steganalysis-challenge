@@ -32,8 +32,10 @@ def evaluate(model, val_dataloader, args, mean, std, loss_func):
             complete_ground_truths.extend(ground_truth.tolist())
             complete_predictions.extend(predictions.tolist())
 
-        print("Average loss this val epoch: {}".format(total_loss / len(val_dataloader)))
-        print(alaska_weighted_auc(complete_ground_truths, complete_predictions))
+    print("Average loss this val epoch: {}".format(total_loss / len(val_dataloader)))
+    print(alaska_weighted_auc(complete_ground_truths, complete_predictions))
+
+    return total_loss / len(val_dataloader)
 
 
 def load_checkpoint(model, checkpoint):

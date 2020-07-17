@@ -144,9 +144,9 @@ def train(train_loop_func, args, logger):
 
     # args.learning_rate = args.learning_rate * args.N_gpu * (args.batch_size / 32)
 
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
-    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.2, patience=1,
-    #                                                        verbose=True)
+    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=1,
+                                                           verbose=False, threshold_mode='abs')
 
     start_epoch = 1
     if args.checkpoint is not None:
@@ -192,12 +192,11 @@ def train(train_loop_func, args, logger):
         if args.local_rank in [0, None]:
             torch.save(obj, f'./saved/{args.backbone}_epoch_{epoch}.pt')
 
-        if epoch % 1 == 0:
-            print("Ancepe evaluarea")
-            evaluate(model, val_dataloader, args, mean, std, loss_function)
-            test_(model, test_dataloader, args, mean, std, epoch)
+        print("Incepe evaluarea")
+        val_loss = evaluate(model, val_dataloader, args, mean, std, loss_function)
+        test_(model, test_dataloader, args, mean, std, epoch)
 
-        scheduler.step()
+        scheduler.step(val_loss)
 
 
 if __name__ == "__main__":
