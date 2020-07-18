@@ -57,6 +57,13 @@ class ALASKA2Dataset(Dataset):
 
         image = np.float32(image.transpose(2, 0, 1)) / 255 # HxWxC to CxHxW
 
+        def onehot(size, target):
+            vec = torch.zeros(size, dtype=torch.float32)
+            vec[target] = 1.
+            return vec
+
+        self.annotations[idx][1] = onehot(4, self.annotations[idx][1])
+
         sample = {'image': image, 'image_path': str(img_name),
                   'ground_truth': self.annotations[idx][1]}
 
