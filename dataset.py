@@ -4,9 +4,7 @@ from albumentations import (
     Resize,
     HorizontalFlip,
     VerticalFlip,
-    Rotate,
     CoarseDropout,
-    ToGray,
     Compose,
     RandomRotate90
 )
@@ -34,7 +32,7 @@ class ALASKA2Dataset(Dataset):
 
         if (augmented):
             self.augmentations = Compose([HorizontalFlip(), VerticalFlip(), RandomRotate90(),
-                                          CoarseDropout(max_holes=16, max_height=32, max_width=32)])
+                                          CoarseDropout(max_holes=12, max_height=24, max_width=24)])
         else:
             self.augmentations = Compose([])
 

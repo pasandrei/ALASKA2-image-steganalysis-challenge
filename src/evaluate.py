@@ -23,12 +23,15 @@ def evaluate(model, val_dataloader, args, mean, std, loss_func):
 
             output = model(img)
 
+            output[output != output] = 0 # Sometimes the model would output "nan" (only with AMP)
+
             loss = loss_func(output, ground_truth.cuda())
             total_loss += loss.item()
 
             predictions = 1 - nn.functional.softmax(output, dim=1).data.cpu().numpy()[:, 0]
 
-            ground_truth[ground_truth != 0] = 1  # When using multiclass
+            ground_truth = ground_truth.cpu().numpy().argmax(axis=1).clip(min=0, max=1).astype(int)
+            # ground_truth[ground_truth != 0] = 1  # When using multiclass
             complete_ground_truths.extend(ground_truth.tolist())
             complete_predictions.extend(predictions.tolist())
 

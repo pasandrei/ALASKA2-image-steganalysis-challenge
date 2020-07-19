@@ -32,11 +32,11 @@ def make_parser():
     parser = ArgumentParser(description="Train Fall Detector")
     parser.add_argument('--data', '-d', type=str, default='dataset', required=False,
                         help='path to test and training data files')
-    parser.add_argument('--epochs', '-e', type=int, default=27,
+    parser.add_argument('--epochs', '-e', type=int, default=40,
                         help='number of epochs for training')
-    parser.add_argument('--batch-size', '--bs', type=int, default=24,
+    parser.add_argument('--batch-size', '--bs', type=int, default=16,
                         help='number of examples for each iteration')
-    parser.add_argument('--eval-batch-size', '--ebs', type=int, default=48,
+    parser.add_argument('--eval-batch-size', '--ebs', type=int, default=32,
                         help='number of examples for each evaluation iteration')
     parser.add_argument('--seed', '-s', type=int, help='manually set random seed for torch')
     parser.add_argument('--checkpoint', type=str, default=None,
@@ -54,7 +54,7 @@ def make_parser():
     parser.add_argument('--weight-decay', '--wd', type=float, default=0.0001,
                         help='momentum argument for SGD optimizer')
 
-    parser.add_argument('--backbone', type=str, default='efficientnet-b3',
+    parser.add_argument('--backbone', type=str, default='efficientnet-b4',
                         choices=['mobilenetv2', 'efficientnet-b0'])
     parser.add_argument('--amp', action='store_true')
     parser.add_argument('--num-workers', type=int, default=0)
@@ -114,7 +114,7 @@ def train(train_loop_func, args, logger):
     random.seed(args.seed)
     torch.backends.cudnn.deterministic = True
 
-    model = EfficientNet.from_pretrained('efficientnet-b0', num_classes=4)
+    model = EfficientNet.from_pretrained('efficientnet-b4', num_classes=4)
 
     if args.local_rank is not None:
         torch.distributed.init_process_group(backend="nccl")
@@ -125,7 +125,7 @@ def train(train_loop_func, args, logger):
     no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
     optimizer_grouped_parameters = [
         {'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)],
-         'weight_decay': 0.001},
+         'weight_decay': 0.002},
         {'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)],
          'weight_decay': 0.0}
     ]
@@ -145,7 +145,7 @@ def train(train_loop_func, args, logger):
     random.shuffle(train)
 
     train = train[:len(train)]
-    split_position = int(len(train) * 0.95)
+    split_position = int(len(train) * 0.96)
 
     train_dataset = ALASKA2Dataset(train[:split_position], root_dir=args.data, augmented=True)
     val_dataset = ALASKA2Dataset(train[split_position:], root_dir=args.data, augmented=False)
@@ -169,7 +169,7 @@ def train(train_loop_func, args, logger):
     # args.learning_rate = args.learning_rate * args.N_gpu * (args.batch_size / 32)
 
     # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=1,
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=2,
                                                            verbose=False, threshold_mode='abs')
 
     start_epoch = 1
@@ -210,7 +210,7 @@ def train(train_loop_func, args, logger):
         # logger.update_epoch_time(epoch, end_epoch_time)
         print("saving model...")
         obj = {'epoch': epoch,
-               'model': model.state_dict(),
+               'model': model.module.state_dict(), # model.state_dict() for non DataParallel model
                'optimizer': optimizer.state_dict(),
                'scheduler': scheduler.state_dict()}
 
